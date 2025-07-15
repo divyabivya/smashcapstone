@@ -1,0 +1,87 @@
+
+
+
+// Load TIGER/2018 counties FeatureCollection
+var dataset = ee.FeatureCollection('TIGER/2018/Counties');
+
+// Michigan's FIPS code is 26
+var michigan = dataset.filter(ee.Filter.eq('STATEFP', '26'));
+var geometry = michigan.geometry()
+
+// Add a numeric ID for painting
+michigan = michigan.map(function(f) {
+  return f.set('GEOID_num', ee.Number.parse(f.get('GEOID')));
+});
+
+// Visualization parameters
+var visParams = {
+  palette: ['#edf8fb', '#b2e2e2', '#66c2a4', '#2ca25f', '#006d2c'],
+  min: 26001,
+  max: 26165,  // rough range of Michigan GEOIDs
+  opacity: 0.8
+};
+
+// Paint counties using GEOID number
+var image = ee.Image().float().paint({
+  featureCollection: michigan,
+  color: 'GEOID_num'
+});
+
+// Add black outlines
+var outlines = ee.Image().paint({
+  featureCollection: michigan,
+  color: 0,
+  width: 1
+});
+
+// Set map to Michigan
+Map.setCenter(-84.5, 44.8, 6);
+
+// Add layers
+Map.addLayer(image, visParams, 'Michigan Counties');
+Map.addLayer(outlines, {palette: ['black']}, 'Outlines');
+Map.addLayer(michigan, {}, 'County Features (Inspector)', false);
+
+
+// ===============================
+// STEP 2: LOAD AND FILTER SENTINEL-2 DATA
+// ===============================
+
+var s2 = ee.ImageCollection("MODIS/061/MOD11A2")
+ .filterDate('2022-06-01', '2022-09-01') // summer 2022
+  .filterBounds(geometry)
+  .select('LST_Day_1km')
+ .median(); // take median image to reduce clouds
+
+// ===============================
+// STEP 3: CALCULATE NDVI
+// ===============================
+
+// ===============================
+// STEP 4: LOAD CENSUS TRACTS
+// ===============================
+
+var tracts = ee.FeatureCollection("TIGER/2018/Counties")
+  .filterBounds(geometry);
+
+Map.addLayer(tracts, {}, 'Census Tracts');
+
+// ===============================
+// STEP 5: ZONAL STATS — MEAN CO PER TRACT
+// ===============================
+
+var COByTract = s2.reduceRegions({
+  collection: tracts,
+  reducer: ee.Reducer.mean()
+});
+
+// ===============================
+// STEP 6: EXPORT AS CSV
+// ===============================
+
+Export.table.toDrive({
+  collection: COByTract,
+  description: 'TEMP_by_Tract_MI_Summer2022',
+  fileFormat: 'CSV',
+  selectors: ['GEOID', 'NAME', 'mean']
+});
